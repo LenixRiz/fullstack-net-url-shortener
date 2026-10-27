@@ -47,16 +47,15 @@
 
     @if (result is not null)
     {
-        var targetShortUrl = $"{result.ShortCode}";
         <div class="card border-success shadow-sm">
             <div class="card-body p-4">
                 <h6 class="card-subtitle mb-2 text-success fw-bold">Link successfully created!</h6>
                 <div class="input-group my-3">
-                <input type="text" class="form-control bg-light" value="@targetShortUrl" readonly />
+                <input type="text" class="form-control bg-light" value="@result.ShortUrl" readonly />
 
                 <button class="btn btn-outline-primary"
                     type="button"
-                    @onclick="() => CopyToClipboard(targetShortUrl)">
+                    @onclick="() => CopyToClipboard(result.ShortUrl)">
                         @if (isCopied)
                         {
                             <span>Copied!</span>
@@ -67,7 +66,7 @@
                         }
                     </button>
 
-                <a href="@targetShortUrl" 
+                <a href="@result.ShortUrl" 
                    target="_blank" 
                    rel="noopener noreferrer" 
                    class="btn btn-outline-secondary">

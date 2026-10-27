@@ -29,6 +29,92 @@
         <span class="dismiss">🗙</span>
     </div>
     <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
-</body>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        window.chartInstance = {};
+        window.renderDailyClicksChart = (canvasId, labels, dataPoints) => {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            
+            const gradient = ctx.createLinearGradient(0, 0, 0, 280);
+            gradient.addColorStop(0, 'rgba(13, 110, 253, 0.9)');
+            gradient.addColorStop(1, 'rgba(13, 110, 253, 0.15)');
+
+            if (window.chartInstance[canvasId]) {
+                window.chartInstance[canvasId].destroy();
+            }
+
+            window.chartInstance[canvasId] = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                        labels: labels,
+                        datasets: [{
+                        label: 'Total Visit',
+                        data: dataPoints,
+                        backgroundColor: gradient,
+                        borderColor: 'rgb(13, 110, 253)',
+                        borderWidth: 1.5,
+                        borderRadius: 8,  
+                        borderSkipped: false,   
+                        hoverBackgroundColor: 'rgba(13, 110, 253, 1)'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 750,
+                        easing: 'easeOutQuart'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(33, 37, 41, 0.92)',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            titleFont: { size: 13, weight: 'bold' },
+                            bodyFont: { size: 12 },
+                            padding: 10,
+                            cornerRadius: 8,
+                            displayColors: false,
+                            callbacks: {
+                                title: (items) => `Date: ${items[0].label}`,
+                                label: (context) => `${context.parsed.y} visits`
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0,
+                                color: '#6c757d'
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)',
+                                drawBorder: false
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: '#6c757d',
+                                font: { weight: '500' }
+                            },
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            })
+        }
+    </script>
+</body>
 </html>
