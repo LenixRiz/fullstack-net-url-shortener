@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 using Npgsql;
 using UrlShortener.Api.Data;
 using UrlShortener.Api.Domain;
@@ -9,6 +11,48 @@ using UrlShortener.Shared.DTOs;
 DotNetEnv.Env.TraversePath().Load();
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IIdGenerator>(_ => new SnowflakeIdGenerator(nodeId: 1));
+builder.Services.AddSingleton<ClickChannel>();
+builder.Services.AddHostedService<ClickAnalyticsWorker>();
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsJsonAsync( new
+        {
+            error = "Too many request. Please wait a few seconds before trying again."
+        }, cancellationToken: token);
+    };
+
+    options.AddPolicy(policyName: "IpRateLimit", httpContext =>
+    {
+        var clientIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+
+        return RateLimitPartition.GetFixedWindowLimiter(clientIp, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromSeconds(30),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0
+        });
+    });
+});
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowBlazorClient", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+    });
+});
 
 var dbHost = Environment.GetEnvironmentVariable("DB_HOST")
     ?? throw new InvalidOperationException("DB_HOST missing or .env failed to load");
@@ -27,12 +71,12 @@ Console.WriteLine($"[DEBUG] DATABASE TARGET: {connBuilder.Database} DI PORT: {co
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connBuilder.ConnectionString));
 
-builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<IIdGenerator>(_ => new SnowflakeIdGenerator(nodeId: 1));
-builder.Services.AddSingleton<ClickChannel>();
-builder.Services.AddHostedService<ClickAnalyticsWorker>();
-
 var app = builder.Build();
+
+const string BlazorCorsPolicy = "AllowBlazorClient";
+
+app.UseCors(BlazorCorsPolicy);
+app.UseRateLimiter();
 
 app.MapPost("/api/shorten", async (
     ShortenUrlRequest request,
@@ -64,7 +108,8 @@ app.MapPost("/api/shorten", async (
     var fullShortUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}/{shortCode}";
 
     return Results.Created($"/{shortCode}", new ShortenUrlResponse(shortCode, fullShortUrl, request.LongUrl));
-});
+})
+.RequireRateLimiting("IpRateLimit");
 
 app.MapGet("/{code}", async (
     string code,

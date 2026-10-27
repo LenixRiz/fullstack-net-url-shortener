@@ -1,7 +1,147 @@
 ﻿@page "/"
+@using System.Net.Http.Json
+@using UrlShortener.Shared.DTOs
+@inject HttpClient Http
+@inject IJSRuntime JS
 
-<PageTitle>Home</PageTitle>
+<PageTitle>URL Shortener</PageTitle>
 
-<h1>Hello, world!</h1>
+<div class="container py-5" style="max-width: 700px;">
+    <div class="text-center mb-4">
+        <h1 class="display-5 fw-bold">URL Shortener</h1>
+        <p class="text-muted">Create short link with high performance and instant analytics.</p>
+    </div>
 
-Welcome to your new app.
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body p-4">
+            <EditForm Model="@requestModel" OnValidSubmit="HandleShortenUrl">
+                <DataAnnotationsValidator />
+
+                <div class="input-group mb-2">
+                    <InputText @bind-Value="requestModel.LongUrl"
+                               class="form-control form-control-lg"
+                               placeholder="Paste your link here..." />
+                    <button class="btn btn-primary px-4 fw-semibold" type="submit" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                            <span>Processing...</span>
+                        }
+                        else
+                        {
+                            <span>Shorten</span>
+                        }
+                    </button>
+                </div>
+                <ValidationMessage For="@(() => requestModel.LongUrl)" class="text-danger small"/>
+            </EditForm>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger mt-3 py-2" role="alert">
+                    @errorMessage
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (result is not null)
+    {
+        var targetShortUrl = $"{result.ShortCode}";
+        <div class="card border-success shadow-sm">
+            <div class="card-body p-4">
+                <h6 class="card-subtitle mb-2 text-success fw-bold">Link successfully created!</h6>
+                <div class="input-group my-3">
+                <input type="text" class="form-control bg-light" value="@targetShortUrl" readonly />
+
+                <button class="btn btn-outline-primary"
+                    type="button"
+                    @onclick="() => CopyToClipboard(targetShortUrl)">
+                        @if (isCopied)
+                        {
+                            <span>Copied!</span>
+                        }
+                        else
+                        {
+                            <span>Copy</span>
+                        }
+                    </button>
+
+                <a href="@targetShortUrl" 
+                   target="_blank" 
+                   rel="noopener noreferrer" 
+                   class="btn btn-outline-secondary">
+                    Visit
+                </a>
+            </div>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted text-truncate" style="max-width: 400px;">
+                        Target: @result.OriginalUrl
+                    </small>
+                    <a href="@($"/stats/{result.ShortCode}")" class="btn btn-sm btn-link text-decoration-none">
+                        Statistic &rarr;
+                    </a>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private ShortenUrlRequest requestModel = new();
+    private ShortenUrlResponse? result;
+    private bool isLoading = false;
+    private bool isCopied = false;
+    private string? errorMessage;
+
+    private async Task HandleShortenUrl()
+    {
+        isLoading = true;
+        errorMessage = null;
+        result = null;
+
+        try
+        {
+            var response = await Http.PostAsJsonAsync("api/shorten", requestModel);
+
+            if (response.IsSuccessStatusCode)
+            {
+                result = await response.Content.ReadFromJsonAsync<ShortenUrlResponse>();
+                requestModel = new ShortenUrlRequest();
+            }
+            else
+            {
+                var errorObj = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+                errorMessage = errorObj != null && errorObj.TryGetValue("error", out var msg)
+                    ? msg
+                    : "Failed to create short link.";
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Connection problem: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            isCopied = true;
+            StateHasChanged();
+
+            await Task.Delay(2000);
+            isCopied = false;
+            StateHasChanged();
+        }
+        catch (Exception)
+        {
+            errorMessage = "Failed to copy into clipboard.";
+        }
+    }
+}
