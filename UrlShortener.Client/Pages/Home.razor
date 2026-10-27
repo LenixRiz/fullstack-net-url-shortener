@@ -1,5 +1,8 @@
 ﻿@page "/"
 @using System.Net.Http.Json
+@using System.Runtime.CompilerServices
+@using System.Text.Json
+@using UrlShortener.Client.DTOs
 @using UrlShortener.Shared.DTOs
 @inject HttpClient Http
 @inject IJSRuntime JS
@@ -11,7 +14,8 @@
         <h1 class="display-5 fw-bold">URL Shortener</h1>
         <p class="text-muted">Create short link with high performance and instant analytics.</p>
     </div>
-
+    
+    <!-- Card Form Input -->
     <div class="card shadow-sm border-0 mb-4">
         <div class="card-body p-4">
             <EditForm Model="@requestModel" OnValidSubmit="HandleShortenUrl">
@@ -45,6 +49,7 @@
         </div>
     </div>
 
+    <!-- Result card -->
     @if (result is not null)
     {
         <div class="card border-success shadow-sm">
@@ -56,14 +61,7 @@
                 <button class="btn btn-outline-primary"
                     type="button"
                     @onclick="() => CopyToClipboard(result.ShortUrl)">
-                        @if (isCopied)
-                        {
-                            <span>Copied!</span>
-                        }
-                        else
-                        {
-                            <span>Copy</span>
-                        }
+                        @(copiedUrl == result.ShortUrl ? "Copied!" : "Copy")
                     </button>
 
                 <a href="@result.ShortUrl" 
@@ -84,14 +82,74 @@
             </div>
         </div>
     }
+
+    <!-- History -->
+    @if (historyList.Count > 0)
+    {
+        <div class="card shadow-sm border-0">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="fw-bold mb-0">History</h5>
+                <button class="btn btn-sm btn-outline-danger" @onclick="ClearHistory">
+                    Delete All
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb=0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Original URL</th>
+                            <th>Short URL</th>
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var item in historyList)
+                        {
+                            <tr>
+                                <td class="text-truncate" style="max-width: 250px;" title="@item.OriginalUrl">
+                                    @item.OriginalUrl
+                                </td>
+                                <td>
+                                    <a href="@item.ShortUrl" target="_blank" rel="noopener noreferrer" class="fw-semibold text-decoration-none">
+                                        @item.ShortUrl
+                                    </a>
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <button class="btn btn-sm btn-light border me-1" @onclick="() => CopyToClipboard(item.ShortUrl)">
+                                        @(copiedUrl == item.ShortUrl ? "✓" : "Copy")
+                                    </button>
+                                    <a href="@($"/stats/{item.ShortCode}")" class="btn btn-sm btn-primary">
+                                        Statistic
+                                    </a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
     private ShortenUrlRequest requestModel = new();
     private ShortenUrlResponse? result;
+    private List<UrlHistoryItem> historyList = new();
     private bool isLoading = false;
-    private bool isCopied = false;
+    private string copiedUrl = string.Empty;
     private string? errorMessage;
+
+    private const string StorageKey = "url_shortener_history";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await LoadHistoryFromStorage();
+            StateHasChanged();
+        }
+    }
 
     private async Task HandleShortenUrl()
     {
@@ -106,7 +164,12 @@
             if (response.IsSuccessStatusCode)
             {
                 result = await response.Content.ReadFromJsonAsync<ShortenUrlResponse>();
-                requestModel = new ShortenUrlRequest();
+
+                if (result != null)
+                {
+                    await AddToHistory(result);
+                    requestModel = new ShortenUrlRequest();
+                }
             }
             else
             {
@@ -126,16 +189,57 @@
         }
     }
 
+    private async Task LoadHistoryFromStorage()
+    {
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("localStorage.getItem", StorageKey);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                historyList = JsonSerializer.Deserialize<List<UrlHistoryItem>>(json) ?? new();
+            }
+        }
+        catch (Exception)
+        {
+            historyList = new();
+        }
+    }
+
+    private async Task AddToHistory(ShortenUrlResponse newItem)
+    {
+        historyList.Insert(0, new UrlHistoryItem
+        {
+            ShortCode = newItem.ShortCode,
+            ShortUrl = newItem.ShortUrl,
+            OriginalUrl = newItem.OriginalUrl,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        if (historyList.Count > 20)
+        {
+            historyList = historyList.Take(20).ToList();
+        }
+
+        var json = JsonSerializer.Serialize(historyList);
+        await JS.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+    }
+
+    private async Task ClearHistory()
+    {
+        historyList.Clear();
+        await JS.InvokeVoidAsync("localStorage.removeItem", StorageKey);
+    }
+
     private async Task CopyToClipboard(string text)
     {
         try
         {
             await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
-            isCopied = true;
+            copiedUrl = text;
             StateHasChanged();
 
             await Task.Delay(2000);
-            isCopied = false;
+            copiedUrl = string.Empty;
             StateHasChanged();
         }
         catch (Exception)
