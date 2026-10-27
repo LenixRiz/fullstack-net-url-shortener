@@ -1,9 +1,11 @@
 namespace UrlShortener.Shared.DTOs;
 
-public record UrlStatsResponse
-(
+public record DailyClickDto(DateTime Date, int Count);
+
+public record UrlStatsResponse(
     string ShortCode,
-    string OriginalUrl,
-    string CreatedAt,
-    int TotalClicks
+    string LongUrl,
+    DateTime CreatedAt,
+    long TotalClicks,
+    List<DailyClickDto> DailyClicks
 );

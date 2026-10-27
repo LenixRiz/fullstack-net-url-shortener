@@ -1,0 +1,16 @@
+@baseUrl = http://localhost:5197
+
+### 1. Buat Short URL
+POST {{baseUrl}}/api/shorten
+Content-Type: application/json
+
+{
+  "longUrl": "https://github.com/LenixRiz"
+}
+
+### 2. Coba Redirect (Ganti XXXXX dengan shortCode hasil respon atas)
+# @no-redirect
+GET {{baseUrl}}/80ArvPiJZ6
+
+### 3. Cek Statistik Tautan
+GET {{baseUrl}}/api/stats/80K8CoSP8Q
