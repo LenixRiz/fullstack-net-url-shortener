@@ -7,6 +7,7 @@ using UrlShortener.Api.Data;
 using UrlShortener.Api.Domain;
 using UrlShortener.Api.Services;
 using UrlShortener.Shared.DTOs;
+using StackExchange.Redis;
 
 DotNetEnv.Env.TraversePath().Load();
 
@@ -66,10 +67,15 @@ var connBuilder = new NpgsqlConnectionStringBuilder
     Password = Environment.GetEnvironmentVariable("DB_PASSWORD")
 };
 
+var redisConnection = Environment.GetEnvironmentVariable("REDIS_CONNECTION") ?? "localhost:6379";
+
 Console.WriteLine($"[DEBUG] DATABASE TARGET: {connBuilder.Database} DI PORT: {connBuilder.Port}");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connBuilder.ConnectionString));
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ => 
+    ConnectionMultiplexer.Connect(redisConnection));
 
 var app = builder.Build();
 
@@ -82,7 +88,7 @@ app.MapPost("/api/shorten", async (
     ShortenUrlRequest request,
     AppDbContext dbContext,
     IIdGenerator idGenerator,
-    LinkGenerator linkGenerator,
+    IConnectionMultiplexer redis,
     HttpContext httpContext) =>
 {
     if (!Uri.TryCreate(request.LongUrl, UriKind.Absolute, out var uriResult)
@@ -105,6 +111,10 @@ app.MapPost("/api/shorten", async (
     dbContext.ShortenedUrls.Add(shortenedUrl);
     await dbContext.SaveChangesAsync();
 
+    var cacheDb = redis.GetDatabase();
+    var payloadToCache = $"{id}:{request.LongUrl}";
+    await cacheDb.StringSetAsync(shortCode, payloadToCache, TimeSpan.FromDays(1));
+
     var fullShortUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}/{shortCode}";
 
     return Results.Created($"/{shortCode}", new ShortenUrlResponse(shortCode, fullShortUrl, request.LongUrl));
@@ -114,34 +124,46 @@ app.MapPost("/api/shorten", async (
 app.MapGet("/{code}", async (
     string code,
     AppDbContext dbContext,
-    IMemoryCache cache,
+    IConnectionMultiplexer redis,
     ClickChannel clickChannel,
     HttpContext httpContext) =>
 {
-    if (!cache.TryGetValue(code, out ShortUrlCacheItem? cacheItem))
-    {
-        cacheItem = await dbContext.ShortenedUrls
-        .AsNoTracking()
-        .Where(u => u.ShortCode == code)
-        .Select(u => new ShortUrlCacheItem(u.Id, u.LongUrl))
-        .FirstOrDefaultAsync();
+    var cacheDb = redis.GetDatabase();
+    
+    string? cachedTarget = await cacheDb.StringGetAsync(code);
+    long urlId;
+    string targetLongUrl;
 
-        if (cacheItem is null)
+    if (!string.IsNullOrEmpty(cachedTarget))
+    {
+        var delimiterIndex = cachedTarget.IndexOf(':');
+        urlId = long.Parse(cachedTarget[..delimiterIndex]);
+        targetLongUrl = cachedTarget[(delimiterIndex + 1)..];
+    }
+    else
+    {
+        var urlEntity = await dbContext.ShortenedUrls
+            .AsNoTracking()
+            .Where(u => u.ShortCode == code)
+            .Select(u => new { u.Id, u.LongUrl })
+            .FirstOrDefaultAsync();
+
+        if (urlEntity is null)
         {
-            return Results.NotFound(new { message = "Link tidak ditemukan." });
+            return Results.NotFound(new { message = "Url not found." });
         }
 
-        var cacheOptions = new MemoryCacheEntryOptions()
-            .SetSlidingExpiration(TimeSpan.FromHours(1))
-            .SetAbsoluteExpiration(TimeSpan.FromDays(1));
+        urlId = urlEntity.Id;
+        targetLongUrl = urlEntity.LongUrl;
 
-        cache.Set(code, cacheItem, cacheOptions);
+        var payloadToCache = $"{urlId}:{targetLongUrl}";
+        await cacheDb.StringSetAsync(code, payloadToCache, TimeSpan.FromDays(1));
     }
 
     var clickEvent = new ClickEvent
     {
         Id = Guid.NewGuid(),
-        ShortenedUrlId = cacheItem!.Id,
+        ShortenedUrlId = urlId,
         ClickedAt = DateTime.UtcNow,
         UserAgent = httpContext.Request.Headers.UserAgent.ToString(),
         Referer = httpContext.Request.Headers.Referer.ToString()
@@ -149,7 +171,7 @@ app.MapGet("/{code}", async (
 
     clickChannel.Writer.TryWrite(clickEvent);
 
-    return Results.Redirect(cacheItem.LongUrl, permanent: false);
+    return Results.Redirect(targetLongUrl, permanent: false);
 });
 
 app.MapGet("/api/stats/{code}", async (

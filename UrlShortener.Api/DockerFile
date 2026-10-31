@@ -1,0 +1,20 @@
+FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+WORKDIR /src
+
+# Salin project files dan restore dependensi
+COPY ["UrlShortener.Shared/UrlShortener.Shared.csproj", "UrlShortener.Shared/"]
+COPY ["UrlShortener.Api/UrlShortener.Api.csproj", "UrlShortener.Api/"]
+RUN dotnet restore "UrlShortener.Api/UrlShortener.Api.csproj"
+
+# Salin source code lengkap dan publikasikan
+COPY . .
+WORKDIR "/src/UrlShortener.Api"
+RUN dotnet publish "UrlShortener.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+# Runtime Image
+FROM mcr.microsoft.com/dotnet/aspnet:9.0-alpine AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+ENV ASPNETCORE_URLS=http://+:5000
+EXPOSE 5000
+ENTRYPOINT ["dotnet", "UrlShortener.Api.dll"]

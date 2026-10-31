@@ -1,23 +1,84 @@
 services:
-  postgres-db:
+  postgres:
     image: postgres:16-alpine
     container_name: url_shortener_db
+    restart: unless-stopped
     environment:
+      POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
-    ports:
-      - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - internal_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: url_shortener_redis
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-url_shortener_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal_net
+
+  api:
+    build:
+      context: .
+      dockerfile: UrlShortener.Api/Dockerfile
+    container_name: url_shortener_api
+    restart: unless-stopped
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_CONNECTION=redis:6379
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - internal_net
+
+  client:
+    build:
+      context: .
+      dockerfile: UrlShortener.Client/Dockerfile
+    container_name: url_shortener_client
+    restart: unless-stopped
+    networks:
+      - internal_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: url_shortener_gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/www/certbot
+    depends_on:
+      - api
+      - client
+    networks:
+      - internal_net
+
+  certbot:
+    image: certbot/certbot
+    container_name: url_shortener_certbot
+    volumes:
+      - certbot_etc:/etc/letsencrypt
+      - certbot_var:/var/www/certbot
 
 volumes:
   postgres_data:
-    driver: local
+  redis_data:
+  certbot_etc:
+  certbot_var:
+
+networks:
+  internal_net:
+    driver: bridge
